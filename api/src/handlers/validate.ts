@@ -42,7 +42,10 @@ export async function validateHandler(
   let merchant;
   try {
     merchant = await getMerchant(normalizedUpiId);
-  } catch {
+  } catch (error) {
+    // Fail closed: we could not confirm the merchant, so we must not report a
+    // trust badge. The specific cause is logged, never returned to the client.
+    logServiceError("merchant", normalizedUpiId, error);
     sendError(res, 503, "MERCHANT_SERVICE_ERROR", "Merchant service is unavailable");
     return;
   }
@@ -60,7 +63,8 @@ export async function validateHandler(
       payload: body.payload,
       merchantVerified: merchant.verified,
     });
-  } catch {
+  } catch (error) {
+    logServiceError("fraud", normalizedUpiId, error);
     sendError(res, 503, "FRAUD_SERVICE_ERROR", "Fraud service is unavailable");
     return;
   }
@@ -72,7 +76,8 @@ export async function validateHandler(
       payload: body.payload,
       signature: body.signature,
     });
-  } catch {
+  } catch (error) {
+    logServiceError("crypto", normalizedUpiId, error);
     sendError(res, 503, "SECURITY_SERVICE_ERROR", "Security service is unavailable");
     return;
   }
@@ -92,6 +97,22 @@ export async function validateHandler(
 }
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
+
+function logServiceError(service: string, upiId: string, error: unknown): void {
+  // MerchantProviderError carries a code and a retryable flag. Other throws are
+  // unexpected, so log the name and message to get something to search on.
+  const detail =
+    error instanceof Error
+      ? `${error.name}: ${error.message}`
+      : String(error);
+  const code =
+    typeof error === "object" && error !== null && "code" in error
+      ? String((error as { code?: unknown }).code)
+      : "UNEXPECTED";
+
+  // eslint-disable-next-line no-console
+  console.error(`[${service}] upiId=${upiId} code=${code} ${detail}`);
+}
 
 function sendError(
   res: Response,

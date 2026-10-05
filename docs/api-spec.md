@@ -94,14 +94,76 @@ Content-Type: application/json
 | 400 | `INVALID_UPI_ID` | `upiId` does not match `localpart@provider` format |
 | 400 | `INVALID_PAYLOAD` | `payload` is an empty string |
 | 404 | `UNKNOWN_MERCHANT` | No merchant found for the provided UPI ID |
-| 503 | `MERCHANT_SERVICE_ERROR` | Merchant provider threw an error |
+| 503 | `MERCHANT_SERVICE_ERROR` | Merchant provider threw an error, timed out, or is not configured |
 | 503 | `FRAUD_SERVICE_ERROR` | Fraud provider threw an error |
 | 503 | `SECURITY_SERVICE_ERROR` | Crypto service threw an error |
 | 500 | `INTERNAL_ERROR` | Unexpected unhandled error |
 
 ---
 
-## Mock behaviour (Phase 1)
+## Merchant verification (Phase 2)
+
+The merchant service has two providers. Which one is active depends **only** on whether `MERCHANT_API_URL` is set — no code change is needed to switch between them.
+
+| Provider | Active when | Purpose |
+|----------|-------------|---------|
+| Mock | `MERCHANT_API_URL` is blank | Local development and tests. Fixture data, **not** real verification. |
+| HTTP | `MERCHANT_API_URL` is set | Real merchant verification over HTTP. |
+
+### HTTP provider request
+
+```http
+GET <MERCHANT_API_URL>?<MERCHANT_UPI_PARAM>=<upiId>
+Accept: application/json
+<MERCHANT_AUTH_HEADER>: <MERCHANT_AUTH_SCHEME> <NPCI_API_KEY>
+```
+
+### Expected response
+
+Field names are configurable so any vendor's payload shape can be consumed without a code change.
+
+```json
+{ "verified": true, "name": "Test Merchant" }
+```
+
+For a nested vendor response, set `MERCHANT_VERIFIED_PATH` and `MERCHANT_NAME_PATH` to dot paths:
+
+```json
+{ "data": { "isVerified": true, "merchant": { "displayName": "Store" } } }
+```
+
+```bash
+MERCHANT_VERIFIED_PATH=data.isVerified
+MERCHANT_NAME_PATH=data.merchant.displayName
+```
+
+### Failure policy — fail closed
+
+If verification cannot be completed, the API returns `503 MERCHANT_SERVICE_ERROR`. It never substitutes a guess, because an unverified merchant would silently downgrade a 🔴 Red badge to 🟡 Amber.
+
+| Upstream condition | Result | Retryable |
+|--------------------|--------|-----------|
+| `404` | `null` → `404 UNKNOWN_MERCHANT` | — |
+| `401` / `403` | `503` — credentials rejected | No |
+| `429` / `5xx` | `503` | Yes |
+| Network failure | `503` | Yes |
+| Timeout (`MERCHANT_TIMEOUT_MS`) | `503` | Yes |
+| `2xx`, body not valid JSON | `503` | No |
+| `2xx`, no boolean at `MERCHANT_VERIFIED_PATH` | `503` | No |
+
+The specific cause is logged server-side (with a code and retryable flag) and never returned to the client. Internal error codes: `MERCHANT_CONFIG_ERROR`, `MERCHANT_UNAVAILABLE`, `MERCHANT_TIMEOUT`, `MERCHANT_BAD_RESPONSE`.
+
+### Caching
+
+Successful lookups (including `404`) are cached in memory for `MERCHANT_CACHE_TTL_MS` (default 5 minutes, `0` disables). **Errors are never cached**, so a recovering provider is picked up on the very next request rather than after a TTL.
+
+The cache is per-process. Running multiple instances means each keeps its own.
+
+---
+
+## Mock behaviour
+
+Used only when `MERCHANT_API_URL` is blank.
 
 The fraud service uses a **deterministic mock provider** when `ML_SERVICE_URL` is not configured.
 
@@ -111,7 +173,7 @@ The fraud service uses a **deterministic mock provider** when `ML_SERVICE_URL` i
 | `"unknown"` | `riskLevel: "medium"`, `riskScore: 50` |
 | anything else (verified merchant) | `riskLevel: "low"`, `riskScore: 15` |
 
-The merchant service uses a mock lookup when `NPCI_API_KEY` is not configured.
+The merchant service uses this mock lookup when `MERCHANT_API_URL` is not configured.
 
 | UPI ID | Response |
 |--------|----------|
@@ -144,7 +206,15 @@ The merchant service uses a mock lookup when `NPCI_API_KEY` is not configured.
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `PORT` | No | Dev server port (default: `3001`) |
-| `NPCI_API_KEY` | No | Activates the real merchant provider when set |
+| `MERCHANT_API_URL` | No | Base URL of the merchant verification endpoint. Blank → mock provider |
+| `NPCI_API_KEY` | Yes\* | Credential for the merchant provider. \*required when `MERCHANT_API_URL` is set |
+| `MERCHANT_AUTH_HEADER` | No | Header the credential is sent in (default: `Authorization`) |
+| `MERCHANT_AUTH_SCHEME` | No | Prefix before the credential (default: `Bearer`). Blank sends the raw key |
+| `MERCHANT_UPI_PARAM` | No | Query parameter used to send the UPI ID (default: `upiId`) |
+| `MERCHANT_VERIFIED_PATH` | No | Dot path to the boolean flag (default: `verified`) |
+| `MERCHANT_NAME_PATH` | No | Dot path to the merchant name (default: `name`) |
+| `MERCHANT_TIMEOUT_MS` | No | Request timeout in ms (default: `5000`) |
+| `MERCHANT_CACHE_TTL_MS` | No | Cache lifetime in ms (default: `300000`). `0` disables caching |
 | `ML_SERVICE_URL` | No | Activates the live ML fraud provider when set |
 | `ML_SERVICE_API_KEY` | No | API key for the ML service |
 
