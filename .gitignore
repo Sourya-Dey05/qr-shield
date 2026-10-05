@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+
+# Environment files — never commit these
+.env
+.env.local
+.env.*.local
+
+# Build output
+dist/
+build/
+.next/
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Vercel
+.vercel/
+
+# Python (ML phase — future)
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+ml/models/*.pkl
+ml/models/*.joblib
+ml/data/raw/
+
+# Test coverage
+coverage/
