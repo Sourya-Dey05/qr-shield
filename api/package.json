@@ -9,8 +9,12 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\"",
-    "test": "jest --runInBand --forceExit"
+    "typecheck:tools": "tsc -p tsconfig.tools.json",
+    "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\" \"tools/**/*.ts\"",
+    "check": "npm run typecheck && npm run typecheck:tools && npm run lint && npm test",
+    "test": "jest --runInBand --forceExit",
+    "stub": "tsx tools/stub-merchant-server.ts",
+    "demo": "tsx tools/demo.ts"
   },
   "dependencies": {
     "express": "^4.18.2",

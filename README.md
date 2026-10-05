@@ -10,10 +10,10 @@ QR-Shield validates UPI QR codes before a user completes a payment. It checks me
 
 ```
 qr-shield/
-├── api/          ← Node.js/TypeScript backend (Phase 1 — this phase)
-├── frontend/     ← React + TypeScript + Tailwind (Phase 1 — Member A)
-├── ml/           ← Python ML service (Phase 3 — Member C)
-├── docs/         ← Architecture, API spec, ML design, security notes
+├── api/          ← Node.js/TypeScript backend (Phases 1–2)
+├── frontend/     ← React + TypeScript + Tailwind (not started)
+├── ml/           ← Python ML service (Phase 3 — not started)
+├── docs/         ← Architecture, API spec
 ├── .github/      ← CI/CD workflows
 └── public-keys.json  ← Public keys for signature verification (Phase 4)
 ```
@@ -45,6 +45,40 @@ MERCHANT_API_URL=https://api.vendor.com/v1/merchants
 NPCI_API_KEY=your-key
 MERCHANT_VERIFIED_PATH=data.isVerified   # if the vendor nests its response
 ```
+
+### Demoing without vendor credentials
+
+No real provider credentials are available yet, so `api/tools/stub-merchant-server.ts` stands in as one. It is a real HTTP server that the real provider talks to over a real socket — bearer auth, nested JSON, 404s, 5xx and timeouts all behave like a vendor.
+
+> **The stub is not verification.** Every merchant it returns is a fixture defined in the stub file. A 🟢 or 🟡 badge produced against it says nothing about a real merchant. Never present these badges as a safety judgement.
+
+```bash
+cd api
+cp .env.stub.example .env    # points the backend at the stub
+
+npm run stub                 # terminal 1 — fake provider on :4010
+npm run dev                  # terminal 2 — QR-Shield API on :3001
+npm run demo                 # terminal 3 — drives every scenario
+```
+
+`npm run demo` prints the badge for each case and exits non-zero if a fail-closed case ever returns something other than 503.
+
+| UPI ID | Provider behaviour | API result |
+|--------|-------------------|------------|
+| `testmerchant@upi` | 200, verified | 🟡 amber |
+| `grocery@okhdfc` | 200, verified | 🟡 amber |
+| `suspicious@upi` | 200, **not** verified | 🔴 red |
+| `nobody@upi` | 404 | `404 UNKNOWN_MERCHANT` |
+| `stub-down@upi` | 503 | `503` fail closed |
+| `stub-unauth@upi` | 401 | `503` fail closed |
+| `stub-ratelimit@upi` | 429 | `503` fail closed |
+| `stub-slow@upi` | never replies | `503` fail closed after timeout |
+| `stub-garbage@upi` | 200, not JSON | `503` fail closed |
+| `stub-nofield@upi` | 200, no `verified` field | `503` fail closed |
+
+The stub returns a deliberately **nested** body (`data.isVerified`) so the configurable dot-path mapping is genuinely exercised. It also sets a decoy `legacyVerified` field with the opposite value, so a misconfigured path would produce visibly wrong results rather than accidentally passing.
+
+To go back to the built-in mock, delete `MERCHANT_API_URL` and `NPCI_API_KEY` from `.env`.
 
 ## Running the backend locally
 
