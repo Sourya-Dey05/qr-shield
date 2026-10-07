@@ -1,4 +1,7 @@
 import request from "supertest";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 
 // Hard-reset the environment before importing `app` / `config` so
 // local .env files (which might point to dead stubs) don't break unit tests.
@@ -12,9 +15,49 @@ import * as merchantService from "../src/services/merchant";
 import * as fraudService from "../src/services/fraud";
 
 import { resetProviderCache } from "../src/services/merchant";
+import { resetKeyCache } from "../src/services/crypto";
+
+// Phase 4 end-to-end setup: generate a real RSA key pair, register the
+// public key in public-keys.json, and sign a payload so the handler
+// exercises the REAL signature verification path.
+const { publicKey, privateKey } = crypto.generateKeyPairSync("rsa", {
+  modulusLength: 2048,
+  publicKeyEncoding:  { type: "spki",  format: "pem" },
+  privateKeyEncoding: { type: "pkcs8", format: "pem" },
+});
+
+const KEYS_FILE = path.resolve(__dirname, "..", "..", "public-keys.json");
+const SIGNED_UPI_ID  = "signedmerchant@upi";
+const SIGNED_PAYLOAD = `upi://pay?pa=${SIGNED_UPI_ID}&pn=SignedMerchant&am=500`;
+const SIGNED_SIGNATURE = crypto
+  .sign("sha256", Buffer.from(SIGNED_PAYLOAD), privateKey)
+  .toString("base64");
+
+let originalKeysJson: string;
 
 beforeAll(() => {
+  // Preserve the developer's real key file so no key store is clobbered.
+  originalKeysJson = fs.readFileSync(KEYS_FILE, "utf-8");
+
+  // Register the test public key alongside any existing keys.
+  const parsed = JSON.parse(originalKeysJson) as { keys: unknown[] };
+  parsed.keys.push({
+    id: `key-${SIGNED_UPI_ID}`,
+    upiId: SIGNED_UPI_ID,
+    algorithm: "RSA-2048-SHA256",
+    publicKey: publicKey.replace(/\n/g, "\\n"),
+    addedAt: new Date().toISOString(),
+  });
+  fs.writeFileSync(KEYS_FILE, JSON.stringify(parsed, null, 2));
+  resetKeyCache();
+
   resetProviderCache();
+});
+
+afterAll(() => {
+  // Restore the developer's real key file.
+  fs.writeFileSync(KEYS_FILE, originalKeysJson);
+  resetKeyCache();
 });
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -205,5 +248,59 @@ describe("POST /api/validate — unexpected internal error", () => {
     expect(res.body.success).toBe(false);
 
     jest.restoreAllMocks();
+  });
+});
+
+// ─── 13. Phase 4 — signed request reaches GREEN (not possible before Phase 4) ──
+
+describe("POST /api/validate — Phase 4 signed payload", () => {
+  it("returns 200 with security.status = verified and badge green", async () => {
+    const res = await request(app)
+      .post("/api/validate")
+      .send({
+        upiId: SIGNED_UPI_ID,
+        payload: SIGNED_PAYLOAD,
+        signature: SIGNED_SIGNATURE,
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.security.status).toBe("verified");
+    expect(res.body.security.signatureValid).toBe(true);
+    // The decision engine now has everything it needs: verified merchant,
+    // low fraud (this UPI has no suspicious signal), and valid signature.
+    expect(res.body.decision.badge).toBe("green");
+  });
+
+  it("returns 200 with badge red when the payload has been tampered with", async () => {
+    const tamperedPayload = SIGNED_PAYLOAD.replace("am=500", "am=99999");
+
+    const res = await request(app)
+      .post("/api/validate")
+      .send({
+        upiId: SIGNED_UPI_ID,
+        payload: tamperedPayload,
+        signature: SIGNED_SIGNATURE,
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.security.status).toBe("invalid");
+    expect(res.body.security.signatureValid).toBe(false);
+    // Invalid signature forces a Red badge — never Green.
+    expect(res.body.decision.badge).toBe("red");
+  });
+
+  it("returns 200 amber when no signature is provided (backward compat)", async () => {
+    const res = await request(app)
+      .post("/api/validate")
+      .send({
+        upiId: SIGNED_UPI_ID,
+        payload: SIGNED_PAYLOAD,
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.security.status).toBe("pending");
+    expect(res.body.security.signatureValid).toBeNull();
+    // Cannot be Green without a signature.
+    expect(res.body.decision.badge).toBe("amber");
   });
 });

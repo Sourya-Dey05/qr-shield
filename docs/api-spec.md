@@ -70,9 +70,9 @@ Content-Type: application/json
 | `merchant.verified` | boolean | `true` only when confirmed by a real verification provider |
 | `fraud.riskScore` | number | 0–100 |
 | `fraud.riskLevel` | `"low"` \| `"medium"` \| `"high"` | |
-| `fraud.source` | `"mock"` \| `"ml-v1"` | **Phase 1 always returns `"mock"`** |
-| `security.signatureValid` | boolean \| null | `null` in Phase 1 — not yet implemented |
-| `security.status` | `"verified"` \| `"invalid"` \| `"pending"` | **Phase 1 always returns `"pending"`** |
+| `fraud.source` | `"mock"` \| `"ml-v1"` | `"mock"` unless `ML_SERVICE_URL` is set (Phase 3) |
+| `security.signatureValid` | boolean \| null | `null` only when the QR carried **no** signature (`status: "pending"`) |
+| `security.status` | `"verified"` \| `"invalid"` \| `"pending"` | `"verified"` requires a valid RSA-SHA256 signature (Phase 4) |
 | `decision.badge` | `"green"` \| `"amber"` \| `"red"` | Final trust badge |
 
 #### Error responses
@@ -180,6 +180,7 @@ The merchant service uses this mock lookup when `MERCHANT_API_URL` is not config
 | `testmerchant@upi` | verified, `"Test Merchant"` |
 | `verified@hdfc` | verified, `"HDFC Verified Store"` |
 | `suspicious@upi` | not verified |
+| `signedmerchant@upi` | verified, `"Signed Merchant"` (used by Phase 4 tests) |
 | any other | 404 UNKNOWN_MERCHANT |
 
 ---
@@ -197,7 +198,10 @@ The merchant service uses this mock lookup when `MERCHANT_API_URL` is not config
 | Merchant not verified AND low risk | 🟡 amber |
 | Merchant verified AND low risk AND `signatureValid === true` | 🟢 green |
 
-> **Phase 1**: Green is unreachable because `signatureValid` is always `null`. This is intentional — we do not claim a QR is fully safe without cryptographic verification.
+> **Phase 4 (complete):** 🟢 Green is now reachable — it requires a registered
+> public key, a valid RSA-SHA256 signature over the payload, a verified
+> merchant and low fraud risk. A tampered payload fails verification and
+> forces 🔴 red regardless of the other signals.
 
 ---
 
@@ -253,14 +257,77 @@ The stub is in [`api/src/services/fraud.ts`](../api/src/services/fraud.ts) — `
 
 ---
 
-## Cryptographic verification integration point (Phase 4)
+## Cryptographic verification (Phase 4)
 
-Phase 4 (Member C) replaces the body of `verifySignature()` in [`api/src/services/crypto.ts`](../api/src/services/crypto.ts).
-
-The function signature and return type must not change:
+`verifySignature()` in [`api/src/services/crypto.ts`](../api/src/services/crypto.ts) is **implemented**.
 
 ```typescript
 export async function verifySignature(input: CryptoInput): Promise<SecurityResult>
+// CryptoInput = { payload: string, signature?: string, upiId: string }
 ```
 
-Public keys are loaded from [`public-keys.json`](../public-keys.json) at the project root.
+**Algorithm:** RSA-2048, SHA-256 digest, base64-encoded signature.
+
+### Outcomes
+
+| Situation | `status` | `signatureValid` | Badge contribution |
+|-----------|----------|------------------|--------------------|
+| QR has no `signature` field | `pending` | `null` | 🟡 (cannot be green) |
+| Signature matches payload | `verified` | `true` | 🟢 possible |
+| Payload altered (amount, payee, …) | `invalid` | `false` | 🔴 red |
+| Signature signed with another key | `invalid` | `false` | 🔴 red |
+| **No public key registered for the VPA** | `invalid` | `false` | 🔴 red |
+| `public-keys.json` unreadable / malformed | *(throws)* | — | `503 SECURITY_SERVICE_ERROR` |
+
+> A missing public key returns **`invalid`, not `pending`**, so an absent key
+> can never be mistaken for "unsigned but fine" and produce a false 🟢.
+
+### Public keys
+
+Keys live in [`public-keys.json`](../public-keys.json) at the project root:
+
+```json
+{
+  "keys": [
+    {
+      "id": "key-testmerchant@upi",
+      "upiId": "testmerchant@upi",
+      "algorithm": "RSA-2048-SHA256",
+      "publicKey": "-----BEGIN PUBLIC KEY-----\\n...\\n-----END PUBLIC KEY-----\\n",
+      "addedAt": "2026-10-07T16:02:51.223Z"
+    }
+  ]
+}
+```
+
+- Keyed by `upiId`, one key per VPA.
+- The PEM uses literal `\n` in the file (JSON-safe); the service converts it back.
+- The file is read once and cached in-process. Use `resetKeyCache()` after editing it in tests.
+- Malformed individual keys are logged and skipped rather than crashing the service.
+
+### Generating and signing test payloads
+
+```bash
+cd api
+npx tsx tools/generate-keys.ts yourmerchant@upi
+```
+
+This prints a key pair, a signed `upi://pay?...` payload and a ready-to-paste `curl` command that exercises the verified path. It writes the **public** half into `public-keys.json`. The private key is only printed — it is never written to disk.
+
+### End-to-end request
+
+```http
+POST /api/validate
+Content-Type: application/json
+
+{
+  "upiId": "testmerchant@upi",
+  "payload": "upi://pay?pa=testmerchant@upi&pn=Test%20Merchant&am=100",
+  "signature": "<base64>"
+}
+```
+
+> **Security note:** verification proves the QR payload is unaltered. It does
+> **not** by itself prove the merchant is legitimate — that is what the
+> merchant service (Phase 2) and fraud score (Phase 3) are for. All three
+> signals are combined by the decision engine.

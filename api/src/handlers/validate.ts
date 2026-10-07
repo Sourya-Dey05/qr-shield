@@ -75,6 +75,7 @@ export async function validateHandler(
     security = await verifySignature({
       payload: body.payload,
       signature: body.signature,
+      upiId: normalizedUpiId,
     });
   } catch (error) {
     logServiceError("crypto", normalizedUpiId, error);

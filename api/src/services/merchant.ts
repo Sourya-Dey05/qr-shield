@@ -81,6 +81,13 @@ const MOCK_MERCHANTS: Record<string, MerchantResult> = {
     upiId: "suspicious@upi",
     verified: false,
   },
+  // Used by the Phase 4 signed-payload tests (needs a verified merchant so
+  // the decision engine can reach a Green badge).
+  "signedmerchant@upi": {
+    name: "Signed Merchant",
+    upiId: "signedmerchant@upi",
+    verified: true,
+  },
 };
 
 const mockProvider: MerchantProvider = {

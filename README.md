@@ -4,13 +4,15 @@ Secure QR-Code Transaction Validator for UPI payments.
 
 ## What this is
 
-QR-Shield validates UPI QR codes before a user completes a payment. It checks merchant identity, estimates fraud risk, and (in a future phase) verifies cryptographic signatures — returning a **Green / Amber / Red** trust badge.
+QR-Shield validates UPI QR codes before a user completes a payment. It checks
+merchant identity, estimates fraud risk, and verifies cryptographic signatures —
+returning a **Green / Amber / Red** trust badge.
 
 ## Repository structure
 
 ```
 qr-shield/
-├── api/          ← Node.js/TypeScript backend (Phases 1–3)
+├── api/          ← Node.js/TypeScript backend (Phases 1–4)
 ├── frontend/     ← React + TypeScript + Tailwind (not started)
 ├── ml/           ← Python ML service (Phase 3)
 ├── docs/         ← Architecture, API spec, ML design
@@ -20,13 +22,40 @@ qr-shield/
 
 ## Current phase
 
-**Phase 1 — complete.** API contract, merchant service, fraud service abstraction, crypto stub, error handling, tests.
+**Phase 1 — complete.** API contract, merchant service, fraud service abstraction, error handling, tests.
 
 **Phase 2 — complete.** Real merchant verification over HTTP.
 
 **Phase 3 — complete.** Python ML fraud service (XGBoost) integration and training pipeline.
 
-Cryptographic verification is **not yet implemented** (Phase 4). The architecture is designed so it can be added without changing the API layer.
+**Phase 4 — complete.** RSA-SHA256 signature verification — 🟢 Green badges are now reachable.
+
+**Only the frontend remains.**
+
+### Cryptographic verification (Phase 4)
+
+Every signed QR payload is checked with Node's built-in `crypto` module against a
+public key looked up by VPA in [`public-keys.json`](public-keys.json).
+
+| Situation | Result |
+|-----------|--------|
+| No `signature` field in the QR | `pending` → at best 🟡 amber |
+| Signature matches the payload | `verified` → 🟢 possible |
+| Payload altered (amount, payee, …) | `invalid` → 🔴 red |
+| No public key registered for the VPA | `invalid` → 🔴 red |
+| `public-keys.json` unreadable | `503 SECURITY_SERVICE_ERROR` |
+
+**Fail closed:** a missing key returns `invalid`, never `pending`, so an absent key
+cannot be mistaken for "unsigned but fine" and produce a false Green.
+
+```bash
+cd api
+# Generate a key pair, sign a test payload, and print a ready-to-paste curl:
+npx tsx tools/generate-keys.ts yourmerchant@upi
+```
+
+Only the public half is written to `public-keys.json`; the private key is printed
+once and never stored. Full contract in [`docs/api-spec.md`](docs/api-spec.md).
 
 ### Merchant verification (Phase 2)
 

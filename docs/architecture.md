@@ -18,11 +18,11 @@ POST /api/validate
   ▼                ▼                 ▼                  │
 Merchant Service  Fraud Service  Crypto Service        │
   │                │                 │                  │
-  ├── Mock  ← 1   ├── Mock ← 1      └── Stub   ← 1      │
+  ├── Mock  ← 1   ├── Mock ← 1      └── Verify  ← 4     │
   │                │                                     │
-  └── HTTP  ← 2   └── ML    ← 3      Phase 4 impl.      │
-                    │                                     │
-                    └────────────┬────────────────────────┘
+  └── HTTP  ← 2   └── ML    ← 3                         │
+                     │                                     │
+                     └────────────┬────────────────────────┘
                                  ▼
                           Decision Engine
                                  │
@@ -39,8 +39,8 @@ Merchant Service  Fraud Service  Crypto Service        │
 | Service | Answers | Phase |
 |---------|---------|-------|
 | Merchant Service | "Is this UPI identity known and valid?" | 1 (mock), **2 (HTTP — implemented)** |
-| Fraud Service | "Does this QR/merchant look suspicious?" | 1 (mock), 3 (ML) |
-| Crypto Service | "Is this signature cryptographically valid?" | 4 |
+| Fraud Service | "Does this QR/merchant look suspicious?" | 1 (mock), **3 (ML — implemented)** |
+| Crypto Service | "Is this signature cryptographically valid?" | **4 (implemented)** |
 | Decision Engine | "Given all evidence, what badge does the user see?" | 1+ |
 
 ## Interface boundaries
@@ -79,8 +79,33 @@ Node Backend → POST /predict → ML Service → { riskScore, riskLevel, ... }
 
 Integration point: `createMlProvider()` in `api/src/services/fraud.ts`
 
-### Node ↔ Crypto
+### Node ↔ Crypto (Phase 4)
 
 Integration point: `verifySignature()` in `api/src/services/crypto.ts`
 
-Public keys: `public-keys.json` at the project root.
+The backend verifies signatures itself using Node's built-in `crypto` module —
+there is no separate service and no network call.
+
+```
+QR payload + base64 signature + upiId
+        │
+        ▼
+load key from public-keys.json (cached)
+        │
+        ▼
+crypto.verify("sha256", payload, publicKey, signature)
+        │
+        ├── true   → status: "verified"
+        ├── false  → status: "invalid"
+        └── no sig → status: "pending"
+```
+
+Public keys: `public-keys.json` at the project root, keyed by `upiId`.
+Generated with `npx tsx tools/generate-keys.ts <upiId>`.
+
+**Fail closed.** A VPA with no registered key returns `invalid`, not
+`pending`, so an absent key can never be misread as "unsigned but acceptable"
+and produce a false 🟢. Unreadable key material throws, which the handler
+maps to `503 SECURITY_SERVICE_ERROR`.
+
+The key file is read once and cached in-process; `resetKeyCache()` clears it.
