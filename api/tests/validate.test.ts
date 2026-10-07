@@ -1,7 +1,21 @@
 import request from "supertest";
+
+// Hard-reset the environment before importing `app` / `config` so
+// local .env files (which might point to dead stubs) don't break unit tests.
+process.env.MERCHANT_API_URL = "";
+process.env.NPCI_API_KEY = "";
+process.env.ML_SERVICE_URL = "";
+process.env.ML_SERVICE_API_KEY = "";
+
 import app from "../src/app";
 import * as merchantService from "../src/services/merchant";
 import * as fraudService from "../src/services/fraud";
+
+import { resetProviderCache } from "../src/services/merchant";
+
+beforeAll(() => {
+  resetProviderCache();
+});
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

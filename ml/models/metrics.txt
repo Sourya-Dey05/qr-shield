@@ -1,0 +1,40 @@
+Model Evaluation Metrics (Phase 3)
+Generated: 2026-10-07
+Training set: 12,000 samples (15 fraud)
+Test set: 3,000 samples (4 fraud)
+
+Model comparison:
+
+--- Training Logistic Regression ---
+Accuracy:  0.9487
+Precision: 0.0253
+Recall:    1.0000
+F1 Score:  0.0494
+Conf Matrix:
+[[2842  154]
+ [   0    4]]
+
+--- Training Random Forest ---
+Accuracy:  0.9980
+Precision: 0.3750
+Recall:    0.7500
+F1 Score:  0.5000
+Conf Matrix:
+[[2991    5]
+ [   1    3]]
+
+--- Training XGBoost ---
+Accuracy:  0.9993
+Precision: 0.7500
+Recall:    0.7500
+F1 Score:  0.7500
+Conf Matrix:
+[[2995    1]
+ [   1    3]]
+
+==================================================
+BEST MODEL: XGBoost (F1: 0.7500)
+==================================================
+
+Training environment: Google Colab (sklearn 1.5 + xgboost),
+seed=42, PaySim-calibrated synthetic UPI dataset (15k rows, 0.130% fraud).

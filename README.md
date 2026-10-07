@@ -10,10 +10,10 @@ QR-Shield validates UPI QR codes before a user completes a payment. It checks me
 
 ```
 qr-shield/
-├── api/          ← Node.js/TypeScript backend (Phases 1–2)
+├── api/          ← Node.js/TypeScript backend (Phases 1–3)
 ├── frontend/     ← React + TypeScript + Tailwind (not started)
-├── ml/           ← Python ML service (Phase 3 — not started)
-├── docs/         ← Architecture, API spec
+├── ml/           ← Python ML service (Phase 3)
+├── docs/         ← Architecture, API spec, ML design
 ├── .github/      ← CI/CD workflows
 └── public-keys.json  ← Public keys for signature verification (Phase 4)
 ```
@@ -24,7 +24,9 @@ qr-shield/
 
 **Phase 2 — complete.** Real merchant verification over HTTP.
 
-ML fraud scoring and cryptographic verification are **not yet implemented** (Phases 3 and 4). The architecture is designed so both can be added without changing the API layer.
+**Phase 3 — complete.** Python ML fraud service (XGBoost) integration and training pipeline.
+
+Cryptographic verification is **not yet implemented** (Phase 4). The architecture is designed so it can be added without changing the API layer.
 
 ### Merchant verification (Phase 2)
 
