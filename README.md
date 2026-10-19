@@ -4,25 +4,112 @@ Secure QR-Code Transaction Validator for UPI payments.
 
 ## What this is
 
-QR-Shield validates UPI QR codes before a user completes a payment. It checks merchant identity, estimates fraud risk, and (in a future phase) verifies cryptographic signatures — returning a **Green / Amber / Red** trust badge.
+QR-Shield validates UPI QR codes before a user completes a payment. It checks
+merchant identity, estimates fraud risk, and verifies cryptographic signatures —
+returning a **Green / Amber / Red** trust badge.
 
 ## Repository structure
 
 ```
 qr-shield/
-├── api/          ← Node.js/TypeScript backend (Phase 1 — this phase)
-├── frontend/     ← React + TypeScript + Tailwind (Phase 1 — Member A)
-├── ml/           ← Python ML service (Phase 3 — Member C)
-├── docs/         ← Architecture, API spec, ML design, security notes
+├── api/          ← Node.js/TypeScript backend (Phases 1–4)
+├── frontend/     ← React + TypeScript + Tailwind (not started)
+├── ml/           ← Python ML service (Phase 3)
+├── docs/         ← Architecture, API spec, ML design
 ├── .github/      ← CI/CD workflows
 └── public-keys.json  ← Public keys for signature verification (Phase 4)
 ```
 
 ## Current phase
 
-**Backend Phase 1** — API contract, merchant service, fraud service abstraction, error handling, tests.
+**Phase 1 — complete.** API contract, merchant service, fraud service abstraction, error handling, tests.
 
-ML and cryptographic verification are **not yet implemented**. The architecture is designed so both can be added without rewriting the API layer.
+**Phase 2 — complete.** Real merchant verification over HTTP.
+
+**Phase 3 — complete.** Python ML fraud service (XGBoost) integration and training pipeline.
+
+**Phase 4 — complete.** RSA-SHA256 signature verification — 🟢 Green badges are now reachable.
+
+**Only the frontend remains.**
+
+### Cryptographic verification (Phase 4)
+
+Every signed QR payload is checked with Node's built-in `crypto` module against a
+public key looked up by VPA in [`public-keys.json`](public-keys.json).
+
+| Situation | Result |
+|-----------|--------|
+| No `signature` field in the QR | `pending` → at best 🟡 amber |
+| Signature matches the payload | `verified` → 🟢 possible |
+| Payload altered (amount, payee, …) | `invalid` → 🔴 red |
+| No public key registered for the VPA | `invalid` → 🔴 red |
+| `public-keys.json` unreadable | `503 SECURITY_SERVICE_ERROR` |
+
+**Fail closed:** a missing key returns `invalid`, never `pending`, so an absent key
+cannot be mistaken for "unsigned but fine" and produce a false Green.
+
+```bash
+cd api
+# Generate a key pair, sign a test payload, and print a ready-to-paste curl:
+npx tsx tools/generate-keys.ts yourmerchant@upi
+```
+
+Only the public half is written to `public-keys.json`; the private key is printed
+once and never stored. Full contract in [`docs/api-spec.md`](docs/api-spec.md).
+
+### Merchant verification (Phase 2)
+
+The merchant service ships two providers and picks between them purely by configuration:
+
+| Provider | Active when | Notes |
+|----------|-------------|-------|
+| Mock | `MERCHANT_API_URL` is blank | Fixture data for local dev and tests. **Not** real verification |
+| HTTP | `MERCHANT_API_URL` is set | Real verification, vendor-agnostic |
+
+Because the endpoint, auth header, query parameter and response field paths are all environment variables, changing merchant provider is a config change rather than a code change — see [`api/.env.example`](api/.env.example) and [`docs/api-spec.md`](docs/api-spec.md#merchant-verification-phase-2).
+
+**The provider fails closed.** A timeout, 5xx, network error or malformed response returns `503 MERCHANT_SERVICE_ERROR` instead of guessing. Only an explicit upstream `404` means "merchant unknown". This is deliberate: returning an unverified merchant during an outage would quietly turn a 🔴 Red badge into 🟡 Amber.
+
+```bash
+# Example: point at a real provider
+MERCHANT_API_URL=https://api.vendor.com/v1/merchants
+NPCI_API_KEY=your-key
+MERCHANT_VERIFIED_PATH=data.isVerified   # if the vendor nests its response
+```
+
+### Demoing without vendor credentials
+
+No real provider credentials are available yet, so `api/tools/stub-merchant-server.ts` stands in as one. It is a real HTTP server that the real provider talks to over a real socket — bearer auth, nested JSON, 404s, 5xx and timeouts all behave like a vendor.
+
+> **The stub is not verification.** Every merchant it returns is a fixture defined in the stub file. A 🟢 or 🟡 badge produced against it says nothing about a real merchant. Never present these badges as a safety judgement.
+
+```bash
+cd api
+cp .env.stub.example .env    # points the backend at the stub
+
+npm run stub                 # terminal 1 — fake provider on :4010
+npm run dev                  # terminal 2 — QR-Shield API on :3001
+npm run demo                 # terminal 3 — drives every scenario
+```
+
+`npm run demo` prints the badge for each case and exits non-zero if a fail-closed case ever returns something other than 503.
+
+| UPI ID | Provider behaviour | API result |
+|--------|-------------------|------------|
+| `testmerchant@upi` | 200, verified | 🟡 amber |
+| `grocery@okhdfc` | 200, verified | 🟡 amber |
+| `suspicious@upi` | 200, **not** verified | 🔴 red |
+| `nobody@upi` | 404 | `404 UNKNOWN_MERCHANT` |
+| `stub-down@upi` | 503 | `503` fail closed |
+| `stub-unauth@upi` | 401 | `503` fail closed |
+| `stub-ratelimit@upi` | 429 | `503` fail closed |
+| `stub-slow@upi` | never replies | `503` fail closed after timeout |
+| `stub-garbage@upi` | 200, not JSON | `503` fail closed |
+| `stub-nofield@upi` | 200, no `verified` field | `503` fail closed |
+
+The stub returns a deliberately **nested** body (`data.isVerified`) so the configurable dot-path mapping is genuinely exercised. It also sets a decoy `legacyVerified` field with the opposite value, so a misconfigured path would produce visibly wrong results rather than accidentally passing.
+
+To go back to the built-in mock, delete `MERCHANT_API_URL` and `NPCI_API_KEY` from `.env`.
 
 ## Running the backend locally
 

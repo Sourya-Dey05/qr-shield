@@ -1,4 +1,12 @@
 {
-  "comment": "Public keys used for QR signature verification. Populated in Phase 4 by Member C.",
-  "keys": []
+  "comment": "Public keys used for QR signature verification (Phase 4).",
+  "keys": [
+    {
+      "id": "key-testmerchant@upi",
+      "upiId": "testmerchant@upi",
+      "algorithm": "RSA-2048-SHA256",
+      "publicKey": "-----BEGIN PUBLIC KEY-----\\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAoqCL63lt9kKGIF86ZQ+8\\n2tBjO12ojz2OA/x6Ut61R0FC0MxuJy+URuts++Tts1bIA6sqmGWCFh0C+jTSoY3j\\nrv4WsQfKMwVMBRkJ4m9FACiI1SM0aIEEvJzaKd/tb3AJEzpONx95EXHMxSVkm9n7\\nUHrbyimepa+xywlpxWptyJ7aopTd3drFO2fEUUz3BGrI/BYVYa3VgeYTLoyJv2r7\\nngaxnqdzBDcHeW9gFppA/mV7l+k2OwLODoHHXjZGV7zdmcsmtx2lBYaJ6miUPk47\\nuz8i5YKiZyyMJgn97vgPh7RDspa2178NnRKRCknX05Y48d5KPMFspObXJ/Ba69Tp\\n4QIDAQAB\\n-----END PUBLIC KEY-----\\n",
+      "addedAt": "2026-10-07T16:14:09.787Z"
+    }
+  ]
 }
